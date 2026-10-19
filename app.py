@@ -123,10 +123,11 @@ def run_change(action, payload=None, row_id=None):
         st.error('Salvataggio non riuscito. Verifica il database e riprova.')
 
 st.markdown('''<style>
- .block-container {padding-top: 1.5rem; max-width: 1500px;}
- div[data-testid="stMetric"] {background:rgba(125,125,125,.065); padding:12px; border-radius:12px; border:1px solid rgba(125,125,125,.14);}
-</style>''', unsafe_allow_html=True)
-st.title('📈 Wallet Monitor 2.2 — DEMO')
+ .block-container {padding-top: 1.2rem; max-width: 1750px;}
+ div[data-testid="stMetric"] {padding:10px; border-radius:5px; border:1px solid #d7dce3;}
+ div[data-testid="stDataFrame"] {border:1px solid #cbd5e1; border-radius:3px;}
+ </style>''', unsafe_allow_html=True)
+st.title('Wallet Monitor 2.2 — DEMO · Vista tabellare')
 st.caption('Registro dimostrativo · calcoli reali del codice 2.2 · valori di mercato SIMULATI')
 with st.sidebar:
     st.success('Ambiente dimostrativo indipendente')
@@ -243,33 +244,137 @@ elif view in ('I miei portafogli', 'Dashboard generale'):
     if not positions:
         st.info('Nessuna posizione aperta. Vai su Nuova operazione per registrare un acquisto.')
     else:
-        DISPLAY = ['Portafoglio','Ticker','Broker','Quantità','Valuta','PMC €','Prezzo attuale',
-                   'Costo €','Valore €','P/L €','P/L %','Peso %','Obiettivo %',
-                   'Scostamento pp','Forward Yield %','Dividendo annuo €']
-        def table(items, suffix, general=False):
-            default = ['Portafoglio','Ticker','Broker','Quantità','PMC €','Valore €','P/L €',
-                       'P/L %','Peso %','Obiettivo %','Forward Yield %','Dividendo annuo €'] if general else \
-                      ['Ticker','Broker','Quantità','PMC €','Valore €','P/L €','P/L %','Peso %',
-                       'Obiettivo %','Forward Yield %','Dividendo annuo €']
-            with st.expander('⚙️ Mostra / nascondi colonne', expanded=False):
-                selected = st.multiselect('Colonne visibili', DISPLAY, default=default, key='columns_'+suffix)
-            if not selected:
-                st.info('Scegli almeno una colonna per visualizzare la tabella.')
+        def fmt_money(value):
+            if value is None or pd.isna(value):
+                return '—'
+            return eur(value)
+
+        def fmt_pct(value):
+            if value is None or pd.isna(value):
+                return '—'
+            return f'{float(value):.2f}'.replace('.', ',') + ' %'
+
+        def fmt_quantity(value):
+            return f'{float(value):,.4f}'.replace(',', '_').replace('.', ',').replace('_', '.')
+
+        def action_preset(row, kind, suffix):
+            key = row['_key']
+            selection = (suffix, key, kind)
+            if st.session_state.get('quick_selection') == selection:
+                st.session_state.pop('quick_selection', None)
+                st.session_state.pop('quick_operation', None)
+            else:
+                st.session_state['quick_selection'] = selection
+                st.session_state['quick_operation'] = {
+                    'portfolio': key[0], 'ticker': key[1], 'currency': key[2],
+                    'broker': key[3], 'kind': kind, 'quantity': 1.0,
+                    'unit_price': 0.0, 'fee': 0.0, 'fx_eur': 1.0,
+                    'trade_date': date.today().isoformat(), 'label': '', 'notes': ''
+                }
+
+        def quick_form(suffix, row):
+            preset = st.session_state.get('quick_operation')
+            if not preset:
                 return
-            frame = pd.DataFrame([{k:r.get(k) for k in selected} for r in items])
-            styler = frame.style
-            colorcols = [c for c in ('P/L €','P/L %','Scostamento pp') if c in frame]
-            if colorcols:
-                def color_pnl(v):
-                    if pd.isna(v): return ''
-                    return 'color:#168344;font-weight:700' if v>0 else 'color:#d83a45;font-weight:700' if v<0 else ''
-                styler = styler.map(color_pnl, subset=colorcols)
-            formats = {c:'{:,.2f}' for c in selected if c in ('PMC €','Prezzo attuale','Costo €','Valore €','P/L €','P/L %','Peso %','Obiettivo %','Scostamento pp','Forward Yield %','Dividendo annuo €')}
-            if formats:
-                styler = styler.format(formats, na_rep='N/D', decimal=',', thousands='.')
-            st.dataframe(styler, hide_index=True, use_container_width=True)
-            st.download_button('⬇️ Esporta CSV', frame.to_csv(index=False).encode('utf-8-sig'),
-                               file_name='wallet_'+suffix+'.csv', key='csv_'+suffix)
+            kind_name = 'ACQUISTO' if preset['kind'] == 'BUY' else 'VENDITA'
+            st.info(f"{kind_name} · {preset['ticker']} · {preset['broker'] or 'Senza broker'} — {preset['portfolio']}")
+            with st.container(border=True):
+                with st.form('quick_form_'+suffix):
+                    c1, c2, c3, c4 = st.columns(4)
+                    with c1:
+                        qty = st.number_input('Quantità', min_value=0.000001, value=1.0, step=1.0, format='%.6f')
+                    with c2:
+                        price = st.number_input('Prezzo unitario (€)', min_value=0.0, value=0.0, step=0.5, format='%.2f')
+                    with c3:
+                        fee = st.number_input('Commissioni (€)', min_value=0.0, value=0.0, step=0.5, format='%.2f')
+                    with c4:
+                        day = st.date_input('Data', value=date.today())
+                    save, cancel = st.columns([1, 1])
+                    submitted = save.form_submit_button('Salva '+kind_name.lower(), type='primary', use_container_width=True)
+                    dismissed = cancel.form_submit_button('Chiudi', use_container_width=True)
+                if dismissed:
+                    st.session_state.pop('quick_selection', None)
+                    st.session_state.pop('quick_operation', None)
+                    st.rerun()
+                if submitted:
+                    if price <= 0:
+                        st.error('Indica un prezzo unitario maggiore di zero.')
+                        return
+                    if preset['kind'] == 'SELL' and qty > float(row['Quantità']) + 1e-8:
+                        st.error('La quantità venduta non può superare quella disponibile in questa posizione.')
+                        return
+                    payload = {**preset, 'trade_date': day.isoformat(), 'quantity': qty,
+                               'unit_price': price, 'fee': fee}
+                    try:
+                        mutate(engine, 'add', payload, actor=actor)
+                        st.session_state.pop('quick_selection', None)
+                        st.session_state.pop('quick_operation', None)
+                        st.rerun()
+                    except (LedgerError, ValueError, ArithmeticError) as exc:
+                        st.error(str(exc))
+
+        def table(items, suffix, general=False):
+            # Una riga Streamlit per ogni posizione permette al form di comparire
+            # immediatamente sotto il titolo corretto, cosa impossibile in st.data_editor.
+            names = (['Portafoglio'] if general else []) + [
+                'Titolo / Broker', 'Quantità', 'PMC', 'Valore', 'P/L', 'P/L %',
+                'Peso %', 'Obiettivo %', 'Yield %', 'Dividendi', 'Azioni']
+            widths = ([1.1] if general else []) + [2.3, 1.1, 1.1, 1.2, 1.2, 0.9, 0.9, 1.15, 0.85, 1.15, 1.5]
+            header = st.columns(widths, vertical_alignment='center', gap='small')
+            for col, name in zip(header, names):
+                col.caption('**'+name+'**')
+            st.divider()
+
+            def set_target(key, widget_key):
+                try:
+                    save_target(engine, *key, float(st.session_state[widget_key]))
+                except ValueError as exc:
+                    st.error(str(exc))
+
+            for index, row in enumerate(items):
+                cells = st.columns(widths, vertical_alignment='center', gap='small')
+                cell_index = 0
+                if general:
+                    cells[0].write(row['Portafoglio'])
+                    cell_index = 1
+                vals = [f"**{row['Ticker']}**  \n{row['Broker']}", fmt_quantity(row['Quantità']),
+                        fmt_money(row['PMC €']), fmt_money(row['Valore €']),
+                        fmt_money(row['P/L €']), fmt_pct(row['P/L %']),
+                        fmt_pct(row['Peso %'])]
+                for offset, value in enumerate(vals):
+                    cells[cell_index + offset].markdown(value)
+                target_key = f"target_{suffix}_{index}"
+                target_col = cells[cell_index + 7]
+                target_col.number_input('Obiettivo %', min_value=0.0, max_value=100.0,
+                    value=float(row['Obiettivo %'] or 0), step=0.5, format='%.2f',
+                    key=target_key, label_visibility='collapsed',
+                    on_change=set_target, args=(row['_key'], target_key))
+                cells[cell_index + 8].write(fmt_pct(row['Forward Yield %']))
+                cells[cell_index + 9].write(fmt_money(row['Dividendo annuo €']))
+                actions = cells[cell_index + 10].columns(2, gap='small')
+                if actions[0].button('＋', key=f'plus_{suffix}_{index}', help='Acquista', use_container_width=True):
+                    action_preset(row, 'BUY', suffix)
+                    st.rerun()
+                if actions[1].button('−', key=f'minus_{suffix}_{index}', help='Vendi', use_container_width=True):
+                    action_preset(row, 'SELL', suffix)
+                    st.rerun()
+                selection = st.session_state.get('quick_selection')
+                if selection and selection[0] == suffix and selection[1] == row['_key']:
+                    quick_form(suffix, row)
+                st.markdown('<div style="border-bottom:1px solid #e5e7eb;margin:3px 0 9px 0"></div>', unsafe_allow_html=True)
+
+            value_sum = sum((r['Valore €'] or 0) for r in items)
+            pnl_sum = sum((r['P/L €'] or 0) for r in items)
+            target_sum = sum(float(r['Obiettivo %'] or 0) for r in items)
+            div_sum = sum((r['Dividendo annuo €'] or 0) for r in items)
+            weights_sum = sum((r['Peso %'] or 0) for r in items)
+            st.markdown('**TOTALE PORTAFOGLIO** · Valore: **'+fmt_money(value_sum)+
+                        '** · P/L: **'+fmt_money(pnl_sum)+'** · Peso: **'+fmt_pct(weights_sum)+
+                        '** · Obiettivi: **'+fmt_pct(target_sum)+'** · Dividendi annui: **'+fmt_money(div_sum)+'**')
+            if target_sum > 100.000001:
+                st.warning('La somma degli obiettivi supera il 100%.')
+            elif target_sum < 99.999999:
+                st.caption(f'Obiettivi assegnati: {fmt_pct(target_sum)} (mancano {fmt_pct(100-target_sum)} al 100%)')
 
         if view == 'Dashboard generale':
             a,b,c,d = st.columns(4)
@@ -296,38 +401,6 @@ elif view in ('I miei portafogli', 'Dashboard generale'):
                 b.metric('P/L non realizzato', eur(p_value-p_cost), delta=eur(p_value-p_cost))
                 c.metric('Dividendi annui stimati', eur(p_div))
                 table(part, 'port_'+str(sorted({r['Portafoglio'] for r in positions}).index(portfolio)))
-                with st.expander('🎯 Modifica obiettivi dei titoli'):
-                    keys = [(r['Ticker'],r['Valuta'],r['_key'][3]) for r in part]
-                    picker = st.selectbox('Titolo e broker', range(len(keys)),
-                        format_func=lambda i:f'{keys[i][0]} · {keys[i][2] or "Broker non indicato"}', key='targetpick_'+portfolio)
-                    chosen = part[picker]
-                    target = st.number_input('Peso obiettivo (%)', min_value=0.0, max_value=100.0,
-                        value=float(chosen['Obiettivo %'] or 0), step=0.5, key='targetval_'+portfolio)
-                    if st.button('Salva obiettivo', key='targetsave_'+portfolio):
-                        save_target(engine, *chosen['_key'], target)
-                        st.rerun()
-                with st.expander('➕ Acquista ancora una posizione esistente'):
-                    keys = [r['_key'] for r in part]
-                    selected_pos = st.selectbox('Posizione', range(len(keys)),
-                        format_func=lambda i:f'{keys[i][1]} · {keys[i][3] or "Broker non specificato"}', key='purchase_'+portfolio)
-                    if st.button('Prepara nuovo acquisto',key='purchasego_'+portfolio):
-                        chosen = keys[selected_pos]
-                        st.session_state['buy_again'] = dict(portfolio=chosen[0],ticker=chosen[1],
-                            currency=chosen[2],broker=chosen[3], kind='BUY', quantity=1,
-                            unit_price=0, fx_eur=1, fee=0, trade_date=date.today().isoformat())
-                        # Streamlit widget keys retain values between forms unless explicitly reset.
-                        preset = st.session_state['buy_again']
-                        for field in ('portfolio','ticker','broker','currency','kind'):
-                            st.session_state['new_'+field] = preset[field]
-                        st.session_state['new_date'] = date.today()
-                        st.session_state['new_qty'] = 1.0
-                        st.session_state['new_price'] = 0.0
-                        st.session_state['new_fee'] = 0.0
-                        st.session_state['new_fx'] = 1.0
-                        st.session_state['new_label'] = ''
-                        st.session_state['new_notes'] = ''
-                        st.info('Posizione selezionata. Apri la sezione “Nuova operazione” in alto: i dati del titolo saranno precompilati.')
-
         if active and view == 'Dashboard generale':
             with st.expander('📉 Storico indicativo — valore del portafoglio'):
                 st.caption('Non è un grafico del rendimento: include variazioni dovute ad acquisti e vendite.')
