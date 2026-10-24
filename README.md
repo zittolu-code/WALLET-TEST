@@ -1,4 +1,4 @@
-# Wallet Monitor 2.2 — DEMO (P/L realizzato, totali e quantità colorate)
+# Wallet Monitor 2.2 — DEMO (storico posizioni chiuse e grafica wallet)
 
 **Ambiente dimostrativo indipendente:** soltanto dati fittizi, quotazioni e dividend yield simulati, database SQLite in memoria per sessione del browser. Nessun login Google, Neon, accesso a conti reali, esportazione CSV o backup in esecuzione. Le modifiche si perdono quando termina la sessione o si reimposta la DEMO.
 
@@ -10,7 +10,27 @@
 - Non caricare i file nel repository principale `zittolu-code/wallet` né nella release 2.1.
 - Sostituire nella **radice** del repository DEMO i cinque file dello ZIP: `app.py`, `ledger.py`, `storage.py`, `requirements.txt`, `README.md`.
 - Eseguire commit su GitHub e controllare la DEMO collegata a Streamlit. Se l'aggiornamento non appare, eseguire «Reboot»/«Rerun» oppure ricaricare la pagina.
-- La prima apertura di questa revisione rigenera i dati DEMO semplificati; in alternativa, utilizzare «Ricomincia con i dati di esempio» nel menu laterale.
+- Questa revisione **non forza il reset** delle operazioni già registrate nella sessione DEMO ancora attiva. Per ripristinare i dati iniziali, usare «Ricomincia con i dati di esempio» nel menu laterale.
+
+## Novità della revisione: posizioni chiuse e nuovo stile
+
+1. **Storico sempre consultabile anche dopo la vendita totale.** Una posizione con quantità **0,00** resta nella tabella, contrassegnata **CHIUSA**. Il pulsante a freccia continua ad aprire lo storico completo di acquisti e vendite, con i comandi Modifica ed Elimina.
+2. **Riapertura del titolo:** il pulsante **＋ Acquista** rimane abilitato sulla posizione chiusa, e il nuovo acquisto riporta la riga allo stato aperto senza cancellare lo storico precedente. **− Vendi** è disabilitato quando le quote disponibili sono zero.
+3. **Calcoli dopo la chiusura:** valore e peso della posizione chiusa sono **0,00**. Il PMC, il P/L percentuale e il rendimento forward risultano non applicabili (—). Il **P/L realizzato** resta visibile nei riepiloghi dei wallet e in quello generale. Gli obiettivi delle posizioni chiuse non sono sommati all'allocazione del portafoglio attivo.
+4. **Portafogli separati visivamente:** Directa con intestazione **blu**, Fineco con intestazione **verde**, ciascuno in un proprio riquadro con bordi, titolo e conteggio di posizioni aperte/chiuse. Eventuali wallet aggiunti ricevono colori alternativi. I numeri nei riepiloghi restano compatti e allineati.
+5. **TAB rivisti:** fondo grigio chiaro e lieve ombreggiatura; TAB selezionato con sfondo bianco, testo scuro in **grassetto** e bordo discreto **senza evidenziazione rossa**.
+6. **Dati invariati:** i dati iniziali restano una società per wallet; non vengono introdotti login Google, Neon, backup, prezzi reali o esportazione CSV.
+
+### Collaudo mirato in Streamlit
+
+- Aprire *I miei portafogli*: verificare riquadri colorati indipendenti Directa (blu) e Fineco (verde), indicatori e tabelle racchiusi dentro ogni wallet.
+- Controllare i cinque TAB: quello selezionato deve essere in grassetto con ombra, senza scritte o sottolineature rosse.
+- Per Directa / MSFT, vendere tutta la quantità rimasta (`13,00` sui dati iniziali). La riga deve restare **CHIUSA**, a quantità e valore zero. Aprire la freccia e vedere l'intero storico anche quando il portafoglio è vuoto.
+- Verificare che il P/L realizzato rimanga nei riepiloghi, che **−** sia disabilitato e che **＋** apra il modulo nello storico. Acquistare nuovamente una quantità: la posizione deve tornare aperta e conservare tutte le operazioni precedenti.
+- Chiudere anche Fineco / ENI.MI e controllare che **entrambi** gli storici restino consultabili; la Dashboard generale deve mostrare correttamente solo P/L realizzato e pesi zero.
+- Proseguire con Modifica ed Elimina nello storico di un titolo chiuso, verificando il rifiuto contabile delle operazioni incoerenti.
+
+**Test offline eseguiti:** compilazione Python e prove di rendering con oggetto Streamlit simulato (2 wallet iniziali, chiusura di uno o entrambi, storico consultabile, azioni abilitate/disabilitate, riapertura, blocco di vendita scoperta). **Collaudo browser non eseguito:** il pacchetto Streamlit non è disponibile nell'ambiente offline.
 
 ## Novità dell’aggiornamento del 24/10/2026
 

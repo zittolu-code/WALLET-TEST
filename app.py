@@ -1,5 +1,6 @@
 """Wallet Monitor 2.2 DEMO - dati fittizi e interfaccia tabellare."""
 import hashlib
+from html import escape
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 import pandas as pd
@@ -151,20 +152,60 @@ def run_change(action, payload=None, row_id=None):
 
 st.markdown('''<style>
  .block-container {padding-top: 1.2rem; max-width: 1750px;}
- /* Schede: compatte, senza pulsanti radio. */
- div[data-testid="stTabs"] button[role="tab"] {font-size: .88rem; padding: .55rem .8rem;}
- /* Riepiloghi: identica altezza e tipografia ridotta anche in presenza del delta. */
+ /* Navigation: spreadsheet-style tabs with a neutral bold selected tab. */
+ div[data-testid="stTabs"] [data-baseweb="tab-list"] {gap: .38rem; padding-top:.3rem;}
+ div[data-testid="stTabs"] button[role="tab"] {
+     font-size: .89rem !important; padding: .55rem .88rem !important;
+     color: #455469 !important; font-weight: 550 !important;
+     background: #f1f4f8 !important;
+     border: 1px solid #d8e0e9 !important;
+     border-bottom: 1px solid #c8d2dd !important;
+     border-radius: 9px 9px 0 0 !important;
+     box-shadow: 0 2px 5px rgba(26,43,67,.075);
+     transition: background-color .15s, box-shadow .15s;
+ }
+ div[data-testid="stTabs"] button[role="tab"]:hover {
+     color: #24384f !important; background: #e9eef5 !important;
+ }
+ div[data-testid="stTabs"] button[role="tab"] p {
+     color: inherit !important; font-weight: inherit !important;
+ }
+ div[data-testid="stTabs"] button[role="tab"]:focus-visible {
+     outline: 2px solid #768ba4 !important; outline-offset: 1px;
+ }
+ div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+     color: #1c304b !important; font-weight: 750 !important;
+     background: #fff !important; border-bottom: 2px solid #475569 !important;
+     box-shadow: 0 3px 9px rgba(26,43,67,.15);
+ }
+ div[data-testid="stTabs"] [data-baseweb="tab-highlight"] {
+     background: transparent !important; height: 0 !important;
+ }
+ div[data-testid="stTabs"] [data-baseweb="tab-border"] {background: #d9e1eb !important;}
+ /* Same compact metrics irrespective of delta badges. */
  div[data-testid="stMetric"] {
      box-sizing: border-box; height: 104px; padding: 10px 12px;
-     border-radius: 5px; border: 1px solid #d7dce3;
+     border-radius: 7px; border: 1px solid #d7dce3;
      display: flex; flex-direction: column; justify-content: flex-start;
+     background: #fff;
  }
  div[data-testid="stMetricLabel"] {font-size: .78rem; line-height: 1.2;}
  div[data-testid="stMetricValue"] {font-size: 1.45rem; line-height: 1.4;}
  div[data-testid="stMetricDelta"] {font-size: .73rem; line-height: 1.2;}
  div[data-testid="stDataFrame"] {border:1px solid #cbd5e1; border-radius:3px;}
- /* Storico e modulo operazioni convivono nello stesso riquadro. */
  .wallet-history-separator {border-top:1px solid #e5e7eb; margin:.6rem 0;}
+ /* Wallet card header clearly separates independent portfolios. */
+ .wallet-banner {
+     display:flex; align-items:center; justify-content:space-between;
+     gap: 1rem; flex-wrap:wrap;
+     border: 1px solid var(--wallet-border);
+     border-left: 5px solid var(--wallet-accent);
+     background: var(--wallet-background);
+     border-radius: 8px; padding: .7rem 1rem; margin-bottom: .5rem;
+ }
+ .wallet-banner-title {font-size: 1.25rem; color: #1e293b; font-weight: 750; line-height:1.3;}
+ .wallet-banner-sub {font-size: .73rem; color: #64748b; letter-spacing:.045em; font-weight:600;}
+ .wallet-banner-summary {font-size: .8rem; color:#46566d; font-weight:600;}
  </style>''', unsafe_allow_html=True)
 st.title('Wallet Monitor 2.2 — DEMO · Vista tabellare')
 st.caption('Registro dimostrativo · calcoli reali del codice 2.2 · valori di mercato SIMULATI')
@@ -205,34 +246,46 @@ def render_portfolios(view):
     targets = {(x['portfolio'], x['ticker'], x['currency'], x['broker']): float(x['target_pct']) for x in allocation_targets(engine)}
     positions = []
     warnings = []
+    # The accounting ledger keeps sold-out positions. Keep their rows visible too,
+    # so users can open the full trade history or reopen the position via Buy.
+    traded_keys = {(r['portfolio'], r['ticker'], r['currency'], r['broker'] or '')
+                   for r in active if r['kind'] in ('BUY', 'SELL')}
     for (portfolio, ticker, currency, broker), pos in ledger['positions'].items():
-        if pos['quantity'] <= 0:
-            continue
+        key = (portfolio, ticker, currency, broker)
+        closed = pos['quantity'] <= 0
+        if closed and key not in traded_keys:
+            continue  # A dividend-only record is not a former position.
         row = {'Portafoglio': portfolio, 'Ticker': ticker, 'Broker': broker or 'Non specificato',
-               'Quantità': float(pos['quantity']), 'PMC €': float(pos['cost']/pos['quantity']),
-               'Costo €': float(pos['cost']), 'Valuta': currency, 'Prezzo attuale': None,
-               'Valore €': None, 'P/L €': None, 'P/L %': None,
-               'Peso %': None, 'Obiettivo %': targets.get((portfolio,ticker,currency,broker)),
-               'Scostamento pp': None, 'Forward Yield %': None, 'Dividendo annuo €': None,
-               '_key': (portfolio,ticker,currency,broker)}
-        try:
-            price, found_currency = quote(ticker)
-            if found_currency != currency:
-                raise ValueError(f'Valuta Yahoo {found_currency} diversa da {currency}')
-            current_fx = fx_today(currency)
-            market_value = float(pos['quantity'] * D(price) * D(current_fx))
-            pnl = market_value - row['Costo €']
-            row.update({'Prezzo attuale': price, 'Valore €': market_value,
-                        'P/L €': pnl, 'P/L %': pnl / row['Costo €'] * 100 if row['Costo €'] else 0})
+               'Quantità': 0.0 if closed else float(pos['quantity']),
+               'PMC €': None if closed else float(pos['cost']/pos['quantity']),
+               'Costo €': 0.0 if closed else float(pos['cost']),
+               'Valuta': currency, 'Prezzo attuale': None,
+               'Valore €': 0.0 if closed else None,
+               'P/L €': 0.0 if closed else None, 'P/L %': None,
+               'Peso %': 0.0 if closed else None,
+               'Obiettivo %': targets.get(key),
+               'Scostamento pp': None, 'Forward Yield %': None,
+               'Dividendo annuo €': 0.0 if closed else None,
+               'Chiusa': closed, '_key': key}
+        if not closed:
             try:
-                yield_pct = forward_yield(ticker)
-                row['Forward Yield %'] = yield_pct
-                if yield_pct is not None:
-                    row['Dividendo annuo €'] = market_value * yield_pct / 100
-            except Exception:
-                pass
-        except Exception as exc:
-            warnings.append(f'{portfolio} / {ticker} / {broker or "Broker non specificato"}: {exc}')
+                price, found_currency = quote(ticker)
+                if found_currency != currency:
+                    raise ValueError(f'Valuta Yahoo {found_currency} diversa da {currency}')
+                current_fx = fx_today(currency)
+                market_value = float(pos['quantity'] * D(price) * D(current_fx))
+                pnl = market_value - row['Costo €']
+                row.update({'Prezzo attuale': price, 'Valore €': market_value,
+                            'P/L €': pnl, 'P/L %': pnl / row['Costo €'] * 100 if row['Costo €'] else 0})
+                try:
+                    yield_pct = forward_yield(ticker)
+                    row['Forward Yield %'] = yield_pct
+                    if yield_pct is not None:
+                        row['Dividendo annuo €'] = market_value * yield_pct / 100
+                except Exception:
+                    pass
+            except Exception as exc:
+                warnings.append(f'{portfolio} / {ticker} / {broker or "Broker non specificato"}: {exc}')
         positions.append(row)
     total_value = sum(x['Valore €'] or 0 for x in positions)
     priced_cost = sum(x['Costo €'] for x in positions if x['Valore €'] is not None)
@@ -254,8 +307,8 @@ def render_portfolios(view):
                 st.warning(warning)
     if not positions:
         st.info('Nessuna posizione aperta. Vai su Nuova operazione per registrare un acquisto.')
-        # Mantieni visibili gli utili/perdite consolidati anche dopo la vendita
-        # dell'ultima azione, quando la tabella delle posizioni è vuota.
+        # Nessuna posizione negoziata attiva o storica: in tal caso rimangono
+        # consultabili soltanto eventuali valori contabili (es. dividendi).
         if view == 'Dashboard generale':
             a, b = st.columns(2)
             a.metric('P/L realizzato', eur(ledger['realized']), delta=eur(ledger['realized']))
@@ -458,7 +511,8 @@ def render_portfolios(view):
                 if general:
                     cells[0].write(row['Portafoglio'])
                     cell_index = 1
-                vals = [f"**{row['Ticker']}**  \n{row['Broker']}", fmt_quantity(row['Quantità']),
+                status = ' · :gray[CHIUSA]' if row['Chiusa'] else ''
+                vals = [f"**{row['Ticker']}**{status}  \n{row['Broker']}", fmt_quantity(row['Quantità']),
                         fmt_money(row['PMC €']), fmt_money(row['Valore €']),
                         fmt_money(row['P/L €']), fmt_pct(row['P/L %']),
                         fmt_pct(row['Peso %'])]
@@ -469,7 +523,7 @@ def render_portfolios(view):
                 target_col = cells[cell_index + 7]
                 target_col.number_input('Obiettivo %', min_value=0.0, max_value=100.0,
                     value=float(row['Obiettivo %'] or 0), step=0.5, format='%.2f',
-                    key=target_key, label_visibility='collapsed',
+                    key=target_key, label_visibility='collapsed', disabled=row['Chiusa'],
                     on_change=set_target, args=(row['_key'], target_key))
                 cells[cell_index + 8].write(fmt_pct(row['Forward Yield %']))
                 cells[cell_index + 9].write(fmt_money(row['Dividendo annuo €']))
@@ -477,7 +531,8 @@ def render_portfolios(view):
                 if actions[0].button('＋', key=f'plus_{suffix}_{item_id}', help='Acquista', use_container_width=True):
                     set_inline_action(row, 'BUY')
                     st.rerun()
-                if actions[1].button('−', key=f'minus_{suffix}_{item_id}', help='Vendi', use_container_width=True):
+                if actions[1].button('−', key=f'minus_{suffix}_{item_id}', help='Vendi',
+                                     use_container_width=True, disabled=row['Chiusa']):
                     set_inline_action(row, 'SELL')
                     st.rerun()
 
@@ -497,7 +552,7 @@ def render_portfolios(view):
 
             value_sum = sum((r['Valore €'] or 0) for r in items)
             pnl_sum = sum((r['P/L €'] or 0) for r in items)
-            target_sum = sum(float(r['Obiettivo %'] or 0) for r in items)
+            target_sum = sum(float(r['Obiettivo %'] or 0) for r in items if not r['Chiusa'])
             div_sum = sum((r['Dividendo annuo €'] or 0) for r in items)
             weights_sum = sum((r['Peso %'] or 0) for r in items)
             # Nella vista aggregata includiamo il P/L dei titoli totalmente venduti.
@@ -533,29 +588,48 @@ def render_portfolios(view):
             pie_df = pd.DataFrame([{'Portafoglio':k,'Valore €':v} for k,v in totals_by_portfolio.items() if v>0])
             if not pie_df.empty:
                 st.plotly_chart(px.pie(pie_df, names='Portafoglio', values='Valore €', hole=.5), use_container_width=True)
-            st.markdown('#### Tutti i titoli — tutti i portafogli')
+            st.markdown('#### Tutti i titoli — inclusi quelli chiusi')
             table(positions, 'generale', general=True, realized_override=ledger['realized'])
         else:
-            for portfolio in sorted({r['Portafoglio'] for r in positions} | set(realized_by_portfolio)):
-                part = [r for r in positions if r['Portafoglio']==portfolio]
-                st.divider()
-                st.markdown('### '+portfolio)
+            wallet_names = sorted({r['Portafoglio'] for r in positions} | set(realized_by_portfolio))
+            palette = [('#3172bc', '#edf5ff', '#c9ddf5'),
+                       ('#16836b', '#edfaf5', '#c4e9db'),
+                       ('#7c64ac', '#f5f1fb', '#e0d5f0'),
+                       ('#b4792a', '#fcf5e9', '#efddbd')]
+            for wallet_index, portfolio in enumerate(wallet_names):
+                part = sorted((r for r in positions if r['Portafoglio'] == portfolio),
+                              key=lambda r: (r['Chiusa'], r['Ticker'], r['Broker']))
+                open_count = sum(not r['Chiusa'] for r in part)
+                closed_count = sum(r['Chiusa'] for r in part)
+                accent, bg, border = palette[wallet_index % len(palette)]
                 p_value = sum(x['Valore €'] or 0 for x in part)
                 p_cost = sum(x['Costo €'] for x in part if x['Valore €'] is not None)
                 p_div = sum(x['Dividendo annuo €'] or 0 for x in part)
                 unrealized = D(str(p_value)) - D(str(p_cost))
                 realized = realized_by_portfolio.get(portfolio, D(0))
-                a,b,c,d,e = st.columns(5)
-                a.metric('Valore portafoglio', eur(p_value))
-                b.metric('P/L non realizzato', eur(unrealized), delta=eur(unrealized))
-                c.metric('P/L realizzato', eur(realized), delta=eur(realized))
-                d.metric('P/L complessivo', eur(unrealized + realized), delta=eur(unrealized + realized))
-                e.metric('Dividendi annui stimati', eur(p_div))
-                if part:
-                    table(part, 'port_'+str(sorted({r['Portafoglio'] for r in positions} | set(realized_by_portfolio)).index(portfolio)),
-                          realized_override=realized)
-                else:
-                    st.caption('Tutte le posizioni di questo wallet sono state chiuse. Il P/L realizzato rimane visibile.')
+                # Border encloses header, KPIs, all position rows and expanded histories.
+                with st.container(border=True):
+                    safe_name = escape(str(portfolio))
+                    status_summary = f'{open_count} aperte · {closed_count} chiuse'
+                    st.markdown(
+                        f'<div class="wallet-banner" style="--wallet-accent:{accent};'
+                        f'--wallet-background:{bg};--wallet-border:{border}">'
+                        f'<div><div class="wallet-banner-sub">PORTAFOGLIO {wallet_index + 1:02d}</div>'
+                        f'<div class="wallet-banner-title">▣ {safe_name}</div></div>'
+                        f'<div class="wallet-banner-summary">{status_summary}</div></div>',
+                        unsafe_allow_html=True)
+                    a,b,c,d,e = st.columns(5)
+                    a.metric('Valore portafoglio', eur(p_value))
+                    b.metric('P/L non realizzato', eur(unrealized), delta=eur(unrealized))
+                    c.metric('P/L realizzato', eur(realized), delta=eur(realized))
+                    d.metric('P/L complessivo', eur(unrealized + realized), delta=eur(unrealized + realized))
+                    e.metric('Dividendi annui stimati', eur(p_div))
+                    if open_count == 0 and closed_count:
+                        st.caption('Posizioni chiuse: apri la freccia per consultare lo storico, oppure usa ＋ per riacquistare.')
+                    if part:
+                        table(part, f'port_{wallet_index}', realized_override=realized)
+                    else:
+                        st.caption('Nessuna posizione da mostrare per questo portafoglio.')
         if active and view == 'Dashboard generale':
             with st.expander('📉 Storico indicativo — valore del portafoglio'):
                 st.caption('Non è un grafico del rendimento: include variazioni dovute ad acquisti e vendite.')
