@@ -1,5 +1,5 @@
-"""Wallet Monitor 2.1 — private multi-device investment journal."""
-import os
+"""Wallet Monitor 2.2 DEMO - dati fittizi e interfaccia tabellare."""
+import hashlib
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 import pandas as pd
@@ -272,14 +272,22 @@ elif view in ('I miei portafogli', 'Dashboard generale'):
                     'trade_date': date.today().isoformat(), 'label': '', 'notes': ''
                 }
 
+        def stable_id(key):
+            # Le chiavi non dipendono dall'ordine: la posizione rimane associata
+            # al suo broker anche quando un titolo viene venduto o aggiunto.
+            return hashlib.sha256(repr(key).encode('utf-8')).hexdigest()[:16]
+
         def quick_form(suffix, row):
             preset = st.session_state.get('quick_operation')
             if not preset:
                 return
             kind_name = 'ACQUISTO' if preset['kind'] == 'BUY' else 'VENDITA'
             st.info(f"{kind_name} · {preset['ticker']} · {preset['broker'] or 'Senza broker'} — {preset['portfolio']}")
+            # ID diverso per ogni titolo/broker/tipo di operazione:
+            # non riutilizza campi della posizione precedentemente selezionata.
+            form_id = 'quick_form_' + suffix + '_' + stable_id((*row['_key'], preset['kind']))
             with st.container(border=True):
-                with st.form('quick_form_'+suffix):
+                with st.form(form_id):
                     c1, c2, c3, c4 = st.columns(4)
                     with c1:
                         qty = st.number_input('Quantità', min_value=0.000001, value=1.0, step=1.0, format='%.6f')
@@ -343,7 +351,8 @@ elif view in ('I miei portafogli', 'Dashboard generale'):
                         fmt_pct(row['Peso %'])]
                 for offset, value in enumerate(vals):
                     cells[cell_index + offset].markdown(value)
-                target_key = f"target_{suffix}_{index}"
+                item_id = stable_id(row['_key'])
+                target_key = f"target_{suffix}_{item_id}"
                 target_col = cells[cell_index + 7]
                 target_col.number_input('Obiettivo %', min_value=0.0, max_value=100.0,
                     value=float(row['Obiettivo %'] or 0), step=0.5, format='%.2f',
@@ -352,10 +361,10 @@ elif view in ('I miei portafogli', 'Dashboard generale'):
                 cells[cell_index + 8].write(fmt_pct(row['Forward Yield %']))
                 cells[cell_index + 9].write(fmt_money(row['Dividendo annuo €']))
                 actions = cells[cell_index + 10].columns(2, gap='small')
-                if actions[0].button('＋', key=f'plus_{suffix}_{index}', help='Acquista', use_container_width=True):
+                if actions[0].button('＋', key=f'plus_{suffix}_{item_id}', help='Acquista', use_container_width=True):
                     action_preset(row, 'BUY', suffix)
                     st.rerun()
-                if actions[1].button('−', key=f'minus_{suffix}_{index}', help='Vendi', use_container_width=True):
+                if actions[1].button('−', key=f'minus_{suffix}_{item_id}', help='Vendi', use_container_width=True):
                     action_preset(row, 'SELL', suffix)
                     st.rerun()
                 selection = st.session_state.get('quick_selection')
@@ -418,7 +427,6 @@ elif view == 'Storico operazioni':
         df = pd.DataFrame(active)
         st.dataframe(df[['trade_date', 'portfolio', 'ticker', 'broker', 'kind', 'quantity', 'unit_price', 'currency', 'fx_eur', 'fee', 'notes']],
                      hide_index=True, use_container_width=True)
-        st.download_button('Esporta registro CSV', df.to_csv(index=False).encode('utf-8-sig'), file_name='wallet_transazioni.csv')
     audits = audit_rows(engine)
     st.caption('Le modifiche e gli annullamenti restano nel registro di controllo.')
     if audits:

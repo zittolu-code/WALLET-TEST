@@ -1,15 +1,32 @@
-# Wallet Monitor 2.2 DEMO - azioni integrate nelle righe
+# Wallet Monitor 2.2 DEMO - moduli integrati nelle righe
 
-Versione dimostrativa con dati inventati, senza login, Neon o backup.
+Demo indipendente basata esclusivamente su dati fittizi e quotazioni simulate.
+Nessun login Google, database Neon, connessione a dati finanziari reali o backup attivo.
+La versione principale Wallet Monitor 2.1 non deve essere modificata.
 
-## Aggiornare Streamlit
-Carica `app.py`, `ledger.py`, `storage.py` e `requirements.txt` nel repository pubblico `wallet-demo-22` su branch `main`. I file esistenti vengono aggiornati; Streamlit effettua il redeploy.
+## Pubblicazione demo su GitHub / Streamlit
 
-## Tabella
-- Ogni posizione ha i pulsanti `+` (acquisto) e `-` (vendita) sulla stessa riga.
-- Cliccando si apre un modulo **direttamente sotto quella posizione**, senza cambiare pagina.
-- Il modulo mostra il ticker e broker corretti; richiede data, quantita, prezzo e commissioni. Conferma o Chiudi.
-- La vendita verifica la quantita disponibile.
-- La percentuale obiettivo si modifica direttamente nella colonna e i totali sono sotto la tabella.
+Repository destinazione: `zittolu-code/wallet-demo-22`, branch `main`.
 
-I dati sono dimostrativi e temporanei; non inserire dati finanziari personali.
+1. Su GitHub aprire il repository *della DEMO*, NON `zittolu-code/wallet`.
+2. Sostituire nella root `app.py`, `ledger.py`, `storage.py`, `requirements.txt`, `README.md`
+   con gli omonimi file contenuti in questo ZIP.
+3. Confermare il commit sulla branch `main` della DEMO.
+4. Aprire l'app Streamlit collegata al repository; se necessario usare "Reboot"/"Rerun".
+5. Provare `+` e `-` per MSFT su Directa, MSFT su Fineco e VWCE.DE su Fineco.
+   Verificare che il form compaia immediatamente sotto la posizione scelta.
+
+## Funzioni e limiti
+
+- Acquisto e vendita in linea sotto ogni riga, con prezzo, quantità, commissioni e data.
+- Verifica delle quantità disponibili in caso di vendita.
+- Obiettivi percentuali modificabili sulla posizione (titolo, broker, portafoglio, valuta).
+- Totali sotto ciascuna tabella, valori monetari con euro e percentuali formattate.
+- Nessuna esportazione CSV nella DEMO.
+- Dati temporanei in memoria: si azzerano alla fine della sessione o usando il reset.
+- Non inserire informazioni finanziarie personali.
+
+## Stato dei test
+
+Controllo sintattico e test delle funzioni di registro possono essere eseguiti offline.
+Il rendering visivo va verificato nell'app Streamlit online.
