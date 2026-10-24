@@ -184,6 +184,14 @@ except LedgerError as exc:
     st.error(f'Incoerenza contabile rilevata: {exc}')
     st.stop()
 
+# Il P/L realizzato include anche titoli interamente venduti: il ledger mantiene
+# la voce contabile per ogni combinazione portafoglio/titolo/valuta/broker.
+realized_by_portfolio = {}
+for (portfolio_name, _, _, _), accounting_position in ledger['positions'].items():
+    realized_by_portfolio[portfolio_name] = (
+        realized_by_portfolio.get(portfolio_name, D(0)) + accounting_position['realized']
+    )
+
 # TAB nativi Streamlit: nessun selettore radio e nessun cambio pagina.
 # Il contenuto rimane separato in schede, con chiavi widget stabili.
 
@@ -246,6 +254,18 @@ def render_portfolios(view):
                 st.warning(warning)
     if not positions:
         st.info('Nessuna posizione aperta. Vai su Nuova operazione per registrare un acquisto.')
+        # Mantieni visibili gli utili/perdite consolidati anche dopo la vendita
+        # dell'ultima azione, quando la tabella delle posizioni è vuota.
+        if view == 'Dashboard generale':
+            a, b = st.columns(2)
+            a.metric('P/L realizzato', eur(ledger['realized']), delta=eur(ledger['realized']))
+            b.metric('P/L complessivo', eur(ledger['realized']), delta=eur(ledger['realized']))
+        else:
+            for wallet, wallet_realized in sorted(realized_by_portfolio.items()):
+                st.markdown('### ' + wallet)
+                a, b = st.columns(2)
+                a.metric('P/L realizzato', eur(wallet_realized), delta=eur(wallet_realized))
+                b.metric('P/L complessivo', eur(wallet_realized), delta=eur(wallet_realized))
     else:
         def fmt_money(value):
             if value is None or pd.isna(value):
@@ -292,10 +312,10 @@ def render_portfolios(view):
             with st.container(border=True):
                 st.markdown(f"**Storico acquisti e vendite** · {row['Ticker']} · {row['Broker']}")
                 if history:
-                    widths_history = [1.12, 1.12, .88, 1.18, 1.12, .53, .53]
+                    widths_history = [1.0, 1.05, .82, 1.07, 1.07, 1.0, .53, .53]
                     header = st.columns(widths_history, vertical_alignment='center', gap='small')
                     for col, name in zip(header, ['Data', 'Operazione', 'Quantità', 'Prezzo unitario',
-                                                  'Commissioni', 'Modifica', 'Elimina']):
+                                                  'Totale €', 'Commissioni', 'Modifica', 'Elimina']):
                         col.caption('**' + name + '**')
                     for transaction in history:
                         transaction_id = int(transaction['id'])
@@ -305,17 +325,26 @@ def render_portfolios(view):
                         kind = transaction['kind']
                         cells[1].markdown(':green[Acquisto]' if kind == 'BUY' else ':red[Vendita]')
                         qty_prefix = '+' if kind == 'BUY' else '−'
-                        cells[2].markdown(qty_prefix + fmt_quantity(transaction['quantity']))
+                        quantity_display = qty_prefix + fmt_quantity(transaction['quantity'])
+                        cells[2].markdown(':green[' + quantity_display + ']' if kind == 'BUY'
+                                          else ':red[' + quantity_display + ']')
                         cells[3].markdown(fmt_money(transaction['unit_price']))
-                        cells[4].markdown(fmt_money(transaction['fee']))
-                        if cells[5].button('✏️', key=f'edit_{suffix}_{item_id}_{transaction_id}',
+                        # Totale lordo espresso in EUR al cambio storico, senza commissioni.
+                        # Resta positivo sia per acquisti sia per vendite; il segno e il
+                        # colore della quantità identificano la direzione del movimento.
+                        gross_total = (D(transaction['quantity']) *
+                                       D(transaction['unit_price']) * D(transaction['fx_eur']))
+                        cells[4].markdown(eur(gross_total))
+                        cells[5].markdown(fmt_money(transaction['fee']))
+                        if cells[6].button('✏️', key=f'edit_{suffix}_{item_id}_{transaction_id}',
                                            help=f'Modifica operazione del {trade_day}', use_container_width=True):
                             set_inline_action(row, 'EDIT', transaction_id)
                             st.rerun()
-                        if cells[6].button('🗑️', key=f'delete_{suffix}_{item_id}_{transaction_id}',
+                        if cells[7].button('🗑️', key=f'delete_{suffix}_{item_id}_{transaction_id}',
                                            help=f'Elimina operazione del {trade_day}', use_container_width=True):
                             set_inline_action(row, 'DELETE', transaction_id)
                             st.rerun()
+                    st.caption('Totale € = quantità × prezzo unitario × cambio storico EUR; commissioni escluse.')
                 else:
                     st.caption('Nessuna operazione registrata per questa posizione.')
 
@@ -404,7 +433,7 @@ def render_portfolios(view):
                                        label=previous['label'] if previous else '', notes='')
                         commit_inline('add', payload)
 
-        def table(items, suffix, general=False):
+        def table(items, suffix, general=False, realized_override=None):
             # Una riga Streamlit per ogni posizione permette al form di comparire
             # immediatamente sotto il titolo corretto, cosa impossibile in st.data_editor.
             names = (['Portafoglio'] if general else []) + [
@@ -471,39 +500,62 @@ def render_portfolios(view):
             target_sum = sum(float(r['Obiettivo %'] or 0) for r in items)
             div_sum = sum((r['Dividendo annuo €'] or 0) for r in items)
             weights_sum = sum((r['Peso %'] or 0) for r in items)
+            # Nella vista aggregata includiamo il P/L dei titoli totalmente venduti.
+            portfolios_in_table = {r['Portafoglio'] for r in items}
+            realized_sum = (realized_override if realized_override is not None else
+                            sum((realized_by_portfolio.get(p, D(0)) for p in portfolios_in_table), D(0)))
+            total_pnl = D(str(pnl_sum)) + realized_sum
             st.markdown('**TOTALE PORTAFOGLIO** · Valore: **'+fmt_money(value_sum)+
-                        '** · P/L: **'+fmt_money(pnl_sum)+'** · Peso: **'+fmt_pct(weights_sum)+
-                        '** · Obiettivi: **'+fmt_pct(target_sum)+'** · Dividendi annui: **'+fmt_money(div_sum)+'**')
+                        '** · P/L non realizzato: **'+fmt_money(pnl_sum)+
+                        '** · P/L realizzato: **'+fmt_money(realized_sum)+
+                        '** · P/L complessivo: **'+fmt_money(total_pnl)+
+                        '** · Peso: **'+fmt_pct(weights_sum)+
+                        '** · Obiettivi: **'+fmt_pct(target_sum)+
+                        '** · Dividendi annui: **'+fmt_money(div_sum)+'**')
             if target_sum > 100.000001:
                 st.warning('La somma degli obiettivi supera il 100%.')
             elif target_sum < 99.999999:
                 st.caption(f'Obiettivi assegnati: {fmt_pct(target_sum)} (mancano {fmt_pct(100-target_sum)} al 100%)')
 
         if view == 'Dashboard generale':
-            a,b,c,d = st.columns(4)
+            unrealized = D(str(total_value)) - D(str(priced_cost))
+            realized = ledger['realized']
+            a,b,c,d,e = st.columns(5)
             a.metric('Valore valorizzato', eur(total_value))
-            b.metric('Costo posizioni', eur(total_cost))
-            c.metric('P/L non realizzato*', eur(total_value-priced_cost), delta=eur(total_value-priced_cost))
-            d.metric('Dividendi annui stimati', eur(estimated_div))
-            st.caption('*P/L calcolato soltanto sulle posizioni con quotazione. Stima dividendi lorda: non sono incassi effettivi.')
+            b.metric('P/L non realizzato*', eur(unrealized), delta=eur(unrealized))
+            c.metric('P/L realizzato', eur(realized), delta=eur(realized))
+            d.metric('P/L complessivo*', eur(unrealized + realized),
+                     delta=eur(unrealized + realized))
+            e.metric('Dividendi annui stimati', eur(estimated_div))
+            st.caption('Costo posizioni: ' + eur(total_cost) +
+                       '. *P/L non realizzato solo su titoli quotati; P/L complessivo = realizzato + non realizzato, '
+                       'esclusi i dividendi. Dividendi annui: stima lorda, non incassi effettivi.')
             pie_df = pd.DataFrame([{'Portafoglio':k,'Valore €':v} for k,v in totals_by_portfolio.items() if v>0])
             if not pie_df.empty:
                 st.plotly_chart(px.pie(pie_df, names='Portafoglio', values='Valore €', hole=.5), use_container_width=True)
             st.markdown('#### Tutti i titoli — tutti i portafogli')
-            table(positions, 'generale', general=True)
+            table(positions, 'generale', general=True, realized_override=ledger['realized'])
         else:
-            for portfolio in sorted({r['Portafoglio'] for r in positions}):
+            for portfolio in sorted({r['Portafoglio'] for r in positions} | set(realized_by_portfolio)):
                 part = [r for r in positions if r['Portafoglio']==portfolio]
                 st.divider()
                 st.markdown('### '+portfolio)
                 p_value = sum(x['Valore €'] or 0 for x in part)
                 p_cost = sum(x['Costo €'] for x in part if x['Valore €'] is not None)
                 p_div = sum(x['Dividendo annuo €'] or 0 for x in part)
-                a,b,c = st.columns(3)
+                unrealized = D(str(p_value)) - D(str(p_cost))
+                realized = realized_by_portfolio.get(portfolio, D(0))
+                a,b,c,d,e = st.columns(5)
                 a.metric('Valore portafoglio', eur(p_value))
-                b.metric('P/L non realizzato', eur(p_value-p_cost), delta=eur(p_value-p_cost))
-                c.metric('Dividendi annui stimati', eur(p_div))
-                table(part, 'port_'+str(sorted({r['Portafoglio'] for r in positions}).index(portfolio)))
+                b.metric('P/L non realizzato', eur(unrealized), delta=eur(unrealized))
+                c.metric('P/L realizzato', eur(realized), delta=eur(realized))
+                d.metric('P/L complessivo', eur(unrealized + realized), delta=eur(unrealized + realized))
+                e.metric('Dividendi annui stimati', eur(p_div))
+                if part:
+                    table(part, 'port_'+str(sorted({r['Portafoglio'] for r in positions} | set(realized_by_portfolio)).index(portfolio)),
+                          realized_override=realized)
+                else:
+                    st.caption('Tutte le posizioni di questo wallet sono state chiuse. Il P/L realizzato rimane visibile.')
         if active and view == 'Dashboard generale':
             with st.expander('📉 Storico indicativo — valore del portafoglio'):
                 st.caption('Non è un grafico del rendimento: include variazioni dovute ad acquisti e vendite.')

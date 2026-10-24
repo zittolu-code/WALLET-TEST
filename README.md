@@ -1,4 +1,4 @@
-# Wallet Monitor 2.2 — DEMO (storico e operazioni unificati)
+# Wallet Monitor 2.2 — DEMO (P/L realizzato, totali e quantità colorate)
 
 **Ambiente dimostrativo indipendente:** soltanto dati fittizi, quotazioni e dividend yield simulati, database SQLite in memoria per sessione del browser. Nessun login Google, Neon, accesso a conti reali, esportazione CSV o backup in esecuzione. Le modifiche si perdono quando termina la sessione o si reimposta la DEMO.
 
@@ -12,7 +12,17 @@
 - Eseguire commit su GitHub e controllare la DEMO collegata a Streamlit. Se l'aggiornamento non appare, eseguire «Reboot»/«Rerun» oppure ricaricare la pagina.
 - La prima apertura di questa revisione rigenera i dati DEMO semplificati; in alternativa, utilizzare «Ricomincia con i dati di esempio» nel menu laterale.
 
-## Novità di questa revisione
+## Novità dell’aggiornamento del 24/10/2026
+
+1. **Quantità colorate nello storico:** il numero con il segno **+** è verde negli acquisti; con **−** è rosso nelle vendite. La quantità rimane formattata a due decimali.
+2. **Colonna Totale €** fra *Prezzo unitario* e *Commissioni*. Importo lordo dell'operazione = quantità × prezzo unitario × cambio EUR della registrazione. La colonna Totale mostra un importo positivo sia per acquisti sia per vendite; le commissioni sono visualizzate a parte e non sono detratte dal totale lordo.
+3. **P/L realizzato:** calcolato con il costo medio ponderato dal registro contabile, includendo le commissioni di acquisto e vendita già presenti nella logica originaria. Sono inclusi anche i risultati delle posizioni **completamente vendute**. Distinzione per wallet e totale generale; si aggiorna quando si acquistano, vendono, modificano, eliminano o ripristinano operazioni.
+4. **P/L complessivo = P/L realizzato + P/L non realizzato.** Gli eventuali dividendi incassati sono **esclusi** dal P/L complessivo e la stima dei dividendi annui rimane separata. P/L non realizzato riferito alle posizioni con una quotazione simulata disponibile.
+5. Indicatori aggiunti sia ai singoli portafogli sia alla *Dashboard generale*, e totali testuali aggiornati sotto la tabella. Nel caso tutte le posizioni di un wallet siano state chiuse, il risultato realizzato rimane consultabile.
+
+**Esempio di verifica contabile:** due acquisti MSFT (10 × 100 €, 5 × 150 €) e vendita di 5 a 150 €: P/L realizzato **166,67 €**, P/L non realizzato al prezzo DEMO di 145 € **283,33 €**, P/L complessivo **450,00 €**. L'esempio usa commissioni a zero; i dati fittizi iniziali della DEMO sono diversi e producono importi differenti.
+
+## Funzioni introdotte nelle revisioni precedenti
 
 1. **Un solo riquadro sotto ogni riga:** la freccia `▾` espande lo storico di acquisti/vendite, distinto per **portafoglio + titolo + valuta + broker**. I pulsanti `＋` / `−` aprono nello **stesso riquadro** i campi per un nuovo acquisto o una nuova vendita. Non si crea più un secondo pannello separato sotto lo storico. Un solo modulo è attivo alla volta.
 2. **Modifica e Elimina in ogni riga dello storico:** i pulsanti `✏️` e `🗑️` sono all'estrema destra della transazione. Modifica permette di correggere **data, quantità, prezzo unitario e commissioni**, senza cambiare portafoglio, ticker, broker o tipo di operazione. Elimina richiede conferma. Entrambi agiscono nel riquadro dello storico, senza cambiare schermata.
@@ -44,7 +54,7 @@
 ## Verifica eseguita offline
 
 - Codice Python compilato senza errori sintattici.
-- Test del registro e della logica di interazione (simulazione eventi): acquisto, modifica, cancellazione confermata, cancellazione bloccata per incoerenza, separazione dei wallet e audit.
+- Otto gruppi di verifiche offline della revisione: esempio numerico (166,67 € + 283,33 €), totale lordo storico, aggregazione per wallet, modifica, eliminazione, ripristino e blocco di vendita incoerente, vendite che chiudono interamente una posizione con commissioni, e verifica statica delle colonne/indicatori. La logica preesistente di Acquisto/Vendita/Modifica/Elimina continua a utilizzare il ledger originale.
 - **Verifica visiva/interattiva con Streamlit effettivo ancora necessaria:** Streamlit non è installabile nell'ambiente di collaudo offline. Non dichiarare completato il collaudo browser prima di provarlo nella DEMO pubblicata.
 
 ## Regole di continuità per le chat temporanee
