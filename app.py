@@ -49,6 +49,23 @@ def eur(value):
     return f'{float(value):,.2f}'.replace(',', '_').replace('.', ',').replace('_', '.') + ' €'
 
 
+def fmt_quantity(value):
+    # Solo presentazione: il registro conserva tutta la precisione originale.
+    return f'{float(value):,.2f}'.replace(',', '_').replace('.', ',').replace('_', '.')
+
+
+def trades_for_position(entries, key):
+    # Isolamento rigoroso: portafoglio, ticker, valuta e broker.
+    portfolio, ticker, currency, broker = key
+    return sorted(
+        (r for r in entries
+         if not r.get('deleted') and r['kind'] in ('BUY', 'SELL')
+         and (r['portfolio'], r['ticker'], r['currency'], r['broker'] or '')
+         == (portfolio, ticker, currency, broker)),
+        key=lambda r: (str(r['trade_date']), int(r['id'])), reverse=True
+    )
+
+
 def quote(ticker):
     if ticker not in DEMO_PRICES:
         raise ValueError('Nessun prezzo simulato per questo ticker: prova MSFT, VWCE.DE, ENI.MI, AAPL')
@@ -94,7 +111,7 @@ def form_fields(prefix, initial=None):
         ticker = st.text_input('Ticker Yahoo Finance', value=str(initial.get('ticker', '')), placeholder='VWCE.DE, AAPL, ENI.MI', key=prefix+'ticker')
         broker = st.text_input('Broker', value=str(initial.get('broker', '')), placeholder='es. Directa, Fineco', key=prefix+'broker')
         trade_date = st.date_input('Data operazione', value=date.fromisoformat(str(initial.get('trade_date', date.today().isoformat()))), key=prefix+'date')
-        quantity = st.number_input('Quantità (0 per dividendi)', min_value=0.0, value=float(initial.get('quantity', 1 if kind != 'DIVIDEND' else 0)), format='%.8f', key=prefix+'qty')
+        quantity = st.number_input('Quantità (0 per dividendi)', min_value=0.0, value=float(initial.get('quantity', 1 if kind != 'DIVIDEND' else 0)), format='%.2f', key=prefix+'qty')
     with c2:
         currency = st.text_input('Valuta ISO del prezzo', value=str(initial.get('currency', 'EUR')), max_chars=3, key=prefix+'currency')
         price_label = 'Dividendo / cedola lordo totale' if kind == 'DIVIDEND' else 'Prezzo unitario'
@@ -124,7 +141,17 @@ def run_change(action, payload=None, row_id=None):
 
 st.markdown('''<style>
  .block-container {padding-top: 1.2rem; max-width: 1750px;}
- div[data-testid="stMetric"] {padding:10px; border-radius:5px; border:1px solid #d7dce3;}
+ /* Schede: compatte, senza pulsanti radio. */
+ div[data-testid="stTabs"] button[role="tab"] {font-size: .88rem; padding: .55rem .8rem;}
+ /* Riepiloghi: identica altezza e tipografia ridotta anche in presenza del delta. */
+ div[data-testid="stMetric"] {
+     box-sizing: border-box; height: 104px; padding: 10px 12px;
+     border-radius: 5px; border: 1px solid #d7dce3;
+     display: flex; flex-direction: column; justify-content: flex-start;
+ }
+ div[data-testid="stMetricLabel"] {font-size: .78rem; line-height: 1.2;}
+ div[data-testid="stMetricValue"] {font-size: 1.45rem; line-height: 1.4;}
+ div[data-testid="stMetricDelta"] {font-size: .73rem; line-height: 1.2;}
  div[data-testid="stDataFrame"] {border:1px solid #cbd5e1; border-radius:3px;}
  </style>''', unsafe_allow_html=True)
 st.title('Wallet Monitor 2.2 — DEMO · Vista tabellare')
@@ -136,8 +163,8 @@ with st.sidebar:
         st.session_state.pop('demo_engine', None)
         st.rerun()
 
-view = st.radio('Sezione', ['I miei portafogli', 'Dashboard generale', 'Nuova operazione',
-              'Gestione operazioni', 'Storico operazioni'], horizontal=True)
+tabs = st.tabs(['I miei portafogli', 'Dashboard generale', 'Nuova operazione',
+                'Gestione operazioni', 'Storico operazioni'])
 active = [r for r in operations if not r['deleted']]
 try:
     ledger = calculate(active)
@@ -145,47 +172,11 @@ except LedgerError as exc:
     st.error(f'Incoerenza contabile rilevata: {exc}')
     st.stop()
 
-if view == 'Nuova operazione':
-    st.subheader('Registra acquisto, vendita o dividendo')
-    pref = st.session_state.get('buy_again')
-    if pref:
-        st.info(f"Acquisto aggiuntivo di {pref['ticker']} · {pref['portfolio']} · {pref['broker'] or 'Broker non indicato'}")
-    with st.form('create_transaction'):
-        submitted, data = form_fields('new_', pref)
-        if submitted:
-            st.session_state.pop('buy_again', None)
-            run_change('add', data)
-    st.info('Per un dividendo, inserisci l’importo lordo totale nel campo importo e le ritenute in “Ritenute e spese”. Per valute diverse da EUR usa il cambio storico corretto.')
+# TAB nativi Streamlit: nessun selettore radio e nessun cambio pagina.
+# Il contenuto rimane separato in schede, con chiavi widget stabili.
 
-elif view == 'Gestione operazioni':
-    st.subheader('Modifica, annulla o ripristina')
-    if operations:
-        frame = pd.DataFrame(operations).sort_values(['trade_date', 'id'], ascending=False)
-        frame['Stato'] = frame['deleted'].map({0: 'Attiva', 1: 'Annullata'})
-        frame['Tipo'] = frame['kind'].map({'BUY': 'Acquisto', 'SELL': 'Vendita', 'DIVIDEND': 'Dividendo'})
-        st.dataframe(frame[['id', 'trade_date', 'portfolio', 'ticker', 'broker', 'Tipo', 'quantity', 'unit_price', 'currency', 'fee', 'Stato']],
-                     hide_index=True, use_container_width=True)
-        ids = {f"#{r['id']} · {r['trade_date']} · {r['portfolio']} · {r['ticker']} · {r['kind']} · {'Annullata' if r['deleted'] else 'Attiva'}": r for r in operations}
-        choice = st.selectbox('Seleziona la registrazione', list(ids), index=len(ids)-1)
-        row = ids[choice]
-        if row['deleted']:
-            if st.button('↩️ Ripristina registrazione'):
-                run_change('restore', row_id=row['id'])
-        else:
-            with st.expander('✏️ Modifica questa operazione'):
-                # Key ties the widgets to selected record; prevents stale values when selection changes.
-                with st.form('edit_'+str(row['id'])):
-                    submitted, data = form_fields('edit_'+str(row['id'])+'_', row)
-                    if submitted:
-                        run_change('edit', data, row['id'])
-            confirm = st.checkbox('Confermo l’annullamento della registrazione selezionata', key=f'confirm_{row["id"]}')
-            if st.button('🗑️ Annulla operazione', disabled=not confirm):
-                run_change('delete', row_id=row['id'])
-    else:
-        st.info('Non ci sono ancora operazioni.')
 
-elif view in ('I miei portafogli', 'Dashboard generale'):
-    @st.cache_data(ttl=3600, show_spinner=False)
+def render_portfolios(view):
     def forward_yield(ticker):
         return DEMO_YIELDS.get(ticker)
 
@@ -254,9 +245,6 @@ elif view in ('I miei portafogli', 'Dashboard generale'):
                 return '—'
             return f'{float(value):.2f}'.replace('.', ',') + ' %'
 
-        def fmt_quantity(value):
-            return f'{float(value):,.4f}'.replace(',', '_').replace('.', ',').replace('_', '.')
-
         def action_preset(row, kind, suffix):
             key = row['_key']
             selection = (suffix, key, kind)
@@ -290,7 +278,7 @@ elif view in ('I miei portafogli', 'Dashboard generale'):
                 with st.form(form_id):
                     c1, c2, c3, c4 = st.columns(4)
                     with c1:
-                        qty = st.number_input('Quantità', min_value=0.000001, value=1.0, step=1.0, format='%.6f')
+                        qty = st.number_input('Quantità', min_value=0.000001, value=1.0, step=1.0, format='%.2f')
                     with c2:
                         price = st.number_input('Prezzo unitario (€)', min_value=0.0, value=0.0, step=0.5, format='%.2f')
                     with c3:
@@ -326,11 +314,12 @@ elif view in ('I miei portafogli', 'Dashboard generale'):
             # immediatamente sotto il titolo corretto, cosa impossibile in st.data_editor.
             names = (['Portafoglio'] if general else []) + [
                 'Titolo / Broker', 'Quantità', 'PMC', 'Valore', 'P/L', 'P/L %',
-                'Peso %', 'Obiettivo %', 'Yield %', 'Dividendi', 'Azioni']
-            widths = ([1.1] if general else []) + [2.3, 1.1, 1.1, 1.2, 1.2, 0.9, 0.9, 1.15, 0.85, 1.15, 1.5]
+                'Peso %', 'Obiettivo %', 'Yield %', 'Dividendi', 'Azioni', '']
+            widths = ([1.1] if general else []) + [2.3, 1.1, 1.1, 1.2, 1.2, 0.9, 0.9, 1.15, 0.85, 1.15, 1.5, 0.55]
             header = st.columns(widths, vertical_alignment='center', gap='small')
             for col, name in zip(header, names):
-                col.caption('**'+name+'**')
+                if name:
+                    col.caption('**'+name+'**')
             st.divider()
 
             def set_target(key, widget_key):
@@ -367,6 +356,32 @@ elif view in ('I miei portafogli', 'Dashboard generale'):
                 if actions[1].button('−', key=f'minus_{suffix}_{item_id}', help='Vendi', use_container_width=True):
                     action_preset(row, 'SELL', suffix)
                     st.rerun()
+
+                history_key = f'history_open_{item_id}'
+                is_open = bool(st.session_state.get(history_key, False))
+                arrow = '▴' if is_open else '▾'
+                if cells[cell_index + 11].button(arrow, key=f'history_{suffix}_{item_id}',
+                                                  help='Chiudi storico' if is_open else 'Apri storico acquisti e vendite',
+                                                  use_container_width=True):
+                    st.session_state[history_key] = not is_open
+                    st.rerun()
+                if is_open:
+                    history = trades_for_position(active, row['_key'])
+                    with st.container(border=True):
+                        st.caption(f"Storico acquisti e vendite · {row['Ticker']} · {row['Broker']}")
+                        if history:
+                            detail = pd.DataFrame([{
+                                'Data': date.fromisoformat(str(t['trade_date'])).strftime('%d/%m/%Y'),
+                                'Operazione': 'Acquisto' if t['kind'] == 'BUY' else 'Vendita',
+                                'Quantità': ('+' if t['kind'] == 'BUY' else '−') + fmt_quantity(t['quantity']),
+                                'Prezzo unitario': fmt_money(t['unit_price']),
+                                'Commissioni': fmt_money(t['fee']),
+                            } for t in history])
+                            st.dataframe(detail, hide_index=True, use_container_width=True,
+                                         height=min(38 * (len(detail) + 1) + 6, 350))
+                        else:
+                            st.caption('Nessun acquisto o vendita registrato per questa posizione.')
+
                 selection = st.session_state.get('quick_selection')
                 if selection and selection[0] == suffix and selection[1] == row['_key']:
                     quick_form(suffix, row)
@@ -421,15 +436,71 @@ elif view in ('I miei portafogli', 'Dashboard generale'):
                 if st.session_state.get('portfolio_history'):
                     st.line_chart(pd.DataFrame(st.session_state['portfolio_history']).set_index('Data'))
 
-elif view == 'Storico operazioni':
+
+def render_new_operation():
+    st.subheader('Registra acquisto, vendita o dividendo')
+    pref = st.session_state.get('buy_again')
+    if pref:
+        st.info(f"Acquisto aggiuntivo di {pref['ticker']} · {pref['portfolio']} · {pref['broker'] or 'Broker non indicato'}")
+    with st.form('create_transaction'):
+        submitted, data = form_fields('new_', pref)
+        if submitted:
+            st.session_state.pop('buy_again', None)
+            run_change('add', data)
+    st.info('Per un dividendo, inserisci l’importo lordo totale nel campo importo e le ritenute in “Ritenute e spese”. Per valute diverse da EUR usa il cambio storico corretto.')
+
+
+def render_management():
+    st.subheader('Modifica, annulla o ripristina')
+    if operations:
+        frame = pd.DataFrame(operations).sort_values(['trade_date', 'id'], ascending=False)
+        frame['Stato'] = frame['deleted'].map({0: 'Attiva', 1: 'Annullata'})
+        frame['Tipo'] = frame['kind'].map({'BUY': 'Acquisto', 'SELL': 'Vendita', 'DIVIDEND': 'Dividendo'})
+        frame['Quantità'] = frame['quantity'].map(fmt_quantity)
+        st.dataframe(frame[['id', 'trade_date', 'portfolio', 'ticker', 'broker', 'Tipo', 'Quantità', 'unit_price', 'currency', 'fee', 'Stato']],
+                     hide_index=True, use_container_width=True)
+        ids = {f"#{r['id']} · {r['trade_date']} · {r['portfolio']} · {r['ticker']} · {r['kind']} · {'Annullata' if r['deleted'] else 'Attiva'}": r for r in operations}
+        choice = st.selectbox('Seleziona la registrazione', list(ids), index=len(ids)-1)
+        row = ids[choice]
+        if row['deleted']:
+            if st.button('↩️ Ripristina registrazione'):
+                run_change('restore', row_id=row['id'])
+        else:
+            with st.expander('✏️ Modifica questa operazione'):
+                # Key ties the widgets to selected record; prevents stale values when selection changes.
+                with st.form('edit_'+str(row['id'])):
+                    submitted, data = form_fields('edit_'+str(row['id'])+'_', row)
+                    if submitted:
+                        run_change('edit', data, row['id'])
+            confirm = st.checkbox('Confermo l’annullamento della registrazione selezionata', key=f'confirm_{row["id"]}')
+            if st.button('🗑️ Annulla operazione', disabled=not confirm):
+                run_change('delete', row_id=row['id'])
+    else:
+        st.info('Non ci sono ancora operazioni.')
+
+
+def render_operation_history():
     st.subheader('Storico operazioni e revisioni')
     if active:
         df = pd.DataFrame(active)
-        st.dataframe(df[['trade_date', 'portfolio', 'ticker', 'broker', 'kind', 'quantity', 'unit_price', 'currency', 'fx_eur', 'fee', 'notes']],
+        df['Quantità'] = df['quantity'].map(fmt_quantity)
+        st.dataframe(df[['trade_date', 'portfolio', 'ticker', 'broker', 'kind', 'Quantità', 'unit_price', 'currency', 'fx_eur', 'fee', 'notes']],
                      hide_index=True, use_container_width=True)
     audits = audit_rows(engine)
     st.caption('Le modifiche e gli annullamenti restano nel registro di controllo.')
     if audits:
         st.dataframe(pd.DataFrame(audits), hide_index=True, use_container_width=True)
+
+
+with tabs[0]:
+    render_portfolios('I miei portafogli')
+with tabs[1]:
+    render_portfolios('Dashboard generale')
+with tabs[2]:
+    render_new_operation()
+with tabs[3]:
+    render_management()
+with tabs[4]:
+    render_operation_history()
 
 st.caption('Solo dimostrazione: prezzi e dividend yield inventati. Nessuna autenticazione, backup, connessione Neon o dato di investimento reale.')
