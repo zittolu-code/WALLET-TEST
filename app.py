@@ -19,23 +19,33 @@ from sqlalchemy.pool import StaticPool
 DEMO_PRICES = {'MSFT': (145.0, 'EUR'), 'VWCE.DE': (120.0, 'EUR'),
                'ENI.MI': (16.8, 'EUR'), 'AAPL': (180.0, 'EUR')}
 DEMO_YIELDS = {'MSFT': 0.8, 'VWCE.DE': 0.0, 'ENI.MI': 5.5, 'AAPL': 0.5}
+DEMO_SEED_ID = 'demo-22-uno-per-wallet-v1'
 
 
 def demo_db():
+    # Al primo caricamento di questa revisione, sostituisci i soli vecchi dati
+    # DEMO in memoria; la release principale 2.1 non viene mai coinvolta.
+    if st.session_state.get('_demo_seed_id') != DEMO_SEED_ID:
+        st.session_state.pop('demo_engine', None)
+        st.session_state.pop('inline_action', None)
+        st.session_state['_demo_seed_id'] = DEMO_SEED_ID
     if 'demo_engine' not in st.session_state:
         eng = create_engine('sqlite://', connect_args={'check_same_thread': False},
                             poolclass=StaticPool)
         initialize(eng)
+        # Una sola azienda per wallet DEMO. Ogni azienda ha acquisti e vendite
+        # per provare storico, modifica ed eliminazione senza dati reali.
         example = [
-            ('Azioni', 'MSFT', 'Microsoft (esempio)', 'Directa', '2026-01-12', 10, 100),
-            ('Azioni', 'MSFT', 'Microsoft (esempio)', 'Directa', '2026-03-16', 5, 130),
-            ('Azioni', 'MSFT', 'Microsoft (esempio)', 'Fineco', '2026-04-02', 3, 155),
-            ('ETF', 'VWCE.DE', 'ETF globale (esempio)', 'Fineco', '2026-02-04', 12, 110),
-            ('Azioni', 'ENI.MI', 'ENI (esempio)', 'Directa', '2026-05-11', 30, 15),
+            ('Directa', 'MSFT', 'Microsoft (esempio)', 'Directa', '2026-01-12', 'BUY', 10, 100),
+            ('Directa', 'MSFT', 'Microsoft (esempio)', 'Directa', '2026-03-16', 'BUY', 5, 130),
+            ('Directa', 'MSFT', 'Microsoft (esempio)', 'Directa', '2026-06-15', 'SELL', 2, 140),
+            ('Fineco', 'ENI.MI', 'ENI (esempio)', 'Fineco', '2026-02-03', 'BUY', 20, 15),
+            ('Fineco', 'ENI.MI', 'ENI (esempio)', 'Fineco', '2026-04-08', 'BUY', 10, 16),
+            ('Fineco', 'ENI.MI', 'ENI (esempio)', 'Fineco', '2026-07-10', 'SELL', 5, 17),
         ]
-        for portfolio,ticker,label,broker,day,qty,price in example:
+        for portfolio,ticker,label,broker,day,kind,qty,price in example:
             mutate(eng,'add',dict(portfolio=portfolio,ticker=ticker,label=label,
-                broker=broker,kind='BUY',trade_date=day,quantity=qty,unit_price=price,
+                broker=broker,kind=kind,trade_date=day,quantity=qty,unit_price=price,
                 currency='EUR',fx_eur=1,fee=0,notes='DATO DIMOSTRATIVO'),actor='demo')
         st.session_state['demo_engine'] = eng
     return st.session_state['demo_engine']
@@ -153,6 +163,8 @@ st.markdown('''<style>
  div[data-testid="stMetricValue"] {font-size: 1.45rem; line-height: 1.4;}
  div[data-testid="stMetricDelta"] {font-size: .73rem; line-height: 1.2;}
  div[data-testid="stDataFrame"] {border:1px solid #cbd5e1; border-radius:3px;}
+ /* Storico e modulo operazioni convivono nello stesso riquadro. */
+ .wallet-history-separator {border-top:1px solid #e5e7eb; margin:.6rem 0;}
  </style>''', unsafe_allow_html=True)
 st.title('Wallet Monitor 2.2 — DEMO · Vista tabellare')
 st.caption('Registro dimostrativo · calcoli reali del codice 2.2 · valori di mercato SIMULATI')
@@ -245,69 +257,152 @@ def render_portfolios(view):
                 return '—'
             return f'{float(value):.2f}'.replace('.', ',') + ' %'
 
-        def action_preset(row, kind, suffix):
-            key = row['_key']
-            selection = (suffix, key, kind)
-            if st.session_state.get('quick_selection') == selection:
-                st.session_state.pop('quick_selection', None)
-                st.session_state.pop('quick_operation', None)
-            else:
-                st.session_state['quick_selection'] = selection
-                st.session_state['quick_operation'] = {
-                    'portfolio': key[0], 'ticker': key[1], 'currency': key[2],
-                    'broker': key[3], 'kind': kind, 'quantity': 1.0,
-                    'unit_price': 0.0, 'fee': 0.0, 'fx_eur': 1.0,
-                    'trade_date': date.today().isoformat(), 'label': '', 'notes': ''
-                }
-
         def stable_id(key):
-            # Le chiavi non dipendono dall'ordine: la posizione rimane associata
-            # al suo broker anche quando un titolo viene venduto o aggiunto.
+            # Le chiavi non dipendono dall'ordine delle posizioni e isolano il broker.
             return hashlib.sha256(repr(key).encode('utf-8')).hexdigest()[:16]
 
-        def quick_form(suffix, row):
-            preset = st.session_state.get('quick_operation')
-            if not preset:
-                return
-            kind_name = 'ACQUISTO' if preset['kind'] == 'BUY' else 'VENDITA'
-            st.info(f"{kind_name} · {preset['ticker']} · {preset['broker'] or 'Senza broker'} — {preset['portfolio']}")
-            # ID diverso per ogni titolo/broker/tipo di operazione:
-            # non riutilizza campi della posizione precedentemente selezionata.
-            form_id = 'quick_form_' + suffix + '_' + stable_id((*row['_key'], preset['kind']))
+        def set_inline_action(row, mode, entry_id=None):
+            """Un solo pannello attivo alla volta, sempre dentro lo storico."""
+            key = row['_key']
+            selection = {'key': key, 'mode': mode, 'entry_id': entry_id}
+            if st.session_state.get('inline_action') == selection:
+                st.session_state.pop('inline_action', None)
+            else:
+                st.session_state['inline_action'] = selection
+            st.session_state[f'history_open_{stable_id(key)}'] = True
+
+        def commit_inline(action, payload=None, row_id=None):
+            """Il ledger controlla l'intera cronologia prima di scrivere."""
+            try:
+                mutate(engine, action, payload, row_id, actor)
+                st.session_state.pop('inline_action', None)
+                st.rerun()
+            except (LedgerError, ValueError, ArithmeticError) as exc:
+                st.error(str(exc))
+            except Exception:
+                st.error('Salvataggio non riuscito. Riprova o verifica i dati.')
+
+        def render_inline_panel(row, suffix, item_id):
+            """Un unico riquadro per storico e acquisto, vendita, modifica, elimina."""
+            key = row['_key']
+            history = trades_for_position(active, key)
+            action = st.session_state.get('inline_action')
+            selected = action if action and action.get('key') == key else None
+
             with st.container(border=True):
+                st.markdown(f"**Storico acquisti e vendite** · {row['Ticker']} · {row['Broker']}")
+                if history:
+                    widths_history = [1.12, 1.12, .88, 1.18, 1.12, .53, .53]
+                    header = st.columns(widths_history, vertical_alignment='center', gap='small')
+                    for col, name in zip(header, ['Data', 'Operazione', 'Quantità', 'Prezzo unitario',
+                                                  'Commissioni', 'Modifica', 'Elimina']):
+                        col.caption('**' + name + '**')
+                    for transaction in history:
+                        transaction_id = int(transaction['id'])
+                        cells = st.columns(widths_history, vertical_alignment='center', gap='small')
+                        trade_day = date.fromisoformat(str(transaction['trade_date'])).strftime('%d/%m/%Y')
+                        cells[0].markdown(trade_day)
+                        kind = transaction['kind']
+                        cells[1].markdown(':green[Acquisto]' if kind == 'BUY' else ':red[Vendita]')
+                        qty_prefix = '+' if kind == 'BUY' else '−'
+                        cells[2].markdown(qty_prefix + fmt_quantity(transaction['quantity']))
+                        cells[3].markdown(fmt_money(transaction['unit_price']))
+                        cells[4].markdown(fmt_money(transaction['fee']))
+                        if cells[5].button('✏️', key=f'edit_{suffix}_{item_id}_{transaction_id}',
+                                           help=f'Modifica operazione del {trade_day}', use_container_width=True):
+                            set_inline_action(row, 'EDIT', transaction_id)
+                            st.rerun()
+                        if cells[6].button('🗑️', key=f'delete_{suffix}_{item_id}_{transaction_id}',
+                                           help=f'Elimina operazione del {trade_day}', use_container_width=True):
+                            set_inline_action(row, 'DELETE', transaction_id)
+                            st.rerun()
+                else:
+                    st.caption('Nessuna operazione registrata per questa posizione.')
+
+                # I moduli compaiono QUI, mai in un secondo riquadro sotto lo storico.
+                if not selected:
+                    return
+
+                mode = selected['mode']
+                original = next((t for t in history if int(t['id']) == selected.get('entry_id')), None)
+                if mode in ('EDIT', 'DELETE') and original is None:
+                    st.warning('Operazione non più disponibile. Apri nuovamente lo storico.')
+                    return
+
+                st.markdown('<div class="wallet-history-separator"></div>', unsafe_allow_html=True)
+                if mode == 'DELETE':
+                    trade_date = date.fromisoformat(str(original['trade_date'])).strftime('%d/%m/%Y')
+                    st.warning(f"Eliminare l'operazione #{original['id']} del {trade_date}? "
+                               'Scomparirà dallo storico attivo, ma resterà nel registro di controllo.')
+                    confirm_key = f'inline_confirm_{suffix}_{item_id}_{original["id"]}'
+                    confirmed = st.checkbox('Confermo l’eliminazione di questa operazione', key=confirm_key)
+                    yes, no = st.columns(2)
+                    if yes.button('Elimina operazione', type='primary', disabled=not confirmed,
+                                  key=f'inline_delete_yes_{suffix}_{item_id}', use_container_width=True):
+                        commit_inline('delete', row_id=original['id'])
+                    if no.button('Annulla', key=f'inline_delete_no_{suffix}_{item_id}', use_container_width=True):
+                        st.session_state.pop('inline_action', None)
+                        st.rerun()
+                    return
+
+                if mode == 'EDIT':
+                    original_kind = original['kind']
+                    mode_title = 'Modifica acquisto' if original_kind == 'BUY' else 'Modifica vendita'
+                    default_qty = float(original['quantity'])
+                    default_price = float(original['unit_price'])
+                    default_fee = float(original['fee'])
+                    default_date = date.fromisoformat(str(original['trade_date']))
+                else:
+                    original_kind = mode
+                    mode_title = 'Nuovo acquisto' if mode == 'BUY' else 'Nuova vendita'
+                    default_qty, default_price, default_fee, default_date = 1.0, 0.0, 0.0, date.today()
+
+                st.markdown('**' + mode_title + '**')
+                form_id = f'inline_{suffix}_{item_id}_{mode}_{selected.get("entry_id") or "new"}'
                 with st.form(form_id):
                     c1, c2, c3, c4 = st.columns(4)
                     with c1:
-                        qty = st.number_input('Quantità', min_value=0.000001, value=1.0, step=1.0, format='%.2f')
+                        qty = st.number_input('Quantità', min_value=0.01, value=default_qty,
+                                              step=1.0, format='%.2f')
                     with c2:
-                        price = st.number_input('Prezzo unitario (€)', min_value=0.0, value=0.0, step=0.5, format='%.2f')
+                        price = st.number_input('Prezzo unitario (€)', min_value=0.0,
+                                                value=default_price, step=0.5, format='%.2f')
                     with c3:
-                        fee = st.number_input('Commissioni (€)', min_value=0.0, value=0.0, step=0.5, format='%.2f')
+                        fee = st.number_input('Commissioni (€)', min_value=0.0,
+                                              value=default_fee, step=0.5, format='%.2f')
                     with c4:
-                        day = st.date_input('Data', value=date.today())
-                    save, cancel = st.columns([1, 1])
-                    submitted = save.form_submit_button('Salva '+kind_name.lower(), type='primary', use_container_width=True)
+                        day = st.date_input('Data', value=default_date)
+                    save, cancel = st.columns(2)
+                    submitted = save.form_submit_button('Salva ' + ('modifica' if mode == 'EDIT'
+                                                                    else mode_title.lower()),
+                                                        type='primary', use_container_width=True)
                     dismissed = cancel.form_submit_button('Chiudi', use_container_width=True)
                 if dismissed:
-                    st.session_state.pop('quick_selection', None)
-                    st.session_state.pop('quick_operation', None)
+                    st.session_state.pop('inline_action', None)
                     st.rerun()
                 if submitted:
                     if price <= 0:
                         st.error('Indica un prezzo unitario maggiore di zero.')
                         return
-                    if preset['kind'] == 'SELL' and qty > float(row['Quantità']) + 1e-8:
-                        st.error('La quantità venduta non può superare quella disponibile in questa posizione.')
+                    if mode == 'SELL' and qty > row['Quantità'] + 1e-8:
+                        st.error('La quantità venduta supera quella disponibile in questa posizione.')
                         return
-                    payload = {**preset, 'trade_date': day.isoformat(), 'quantity': qty,
-                               'unit_price': price, 'fee': fee}
-                    try:
-                        mutate(engine, 'add', payload, actor=actor)
-                        st.session_state.pop('quick_selection', None)
-                        st.session_state.pop('quick_operation', None)
-                        st.rerun()
-                    except (LedgerError, ValueError, ArithmeticError) as exc:
-                        st.error(str(exc))
+                    if mode == 'EDIT':
+                        # Non permettiamo di spostare una transazione su un altro asset/broker.
+                        # Manteniamo anche note, cambio storico e altri dati originali.
+                        payload = {field: original[field] for field in (
+                            'portfolio', 'ticker', 'label', 'kind', 'trade_date', 'quantity',
+                            'unit_price', 'currency', 'fx_eur', 'fee', 'notes', 'broker')}
+                        payload.update(trade_date=day.isoformat(), quantity=qty,
+                                       unit_price=price, fee=fee)
+                        commit_inline('edit', payload, original['id'])
+                    else:
+                        previous = history[0] if history else None
+                        payload = dict(portfolio=key[0], ticker=key[1], currency=key[2], broker=key[3],
+                                       kind=mode, trade_date=day.isoformat(), quantity=qty,
+                                       unit_price=price, fee=fee, fx_eur=1.0,
+                                       label=previous['label'] if previous else '', notes='')
+                        commit_inline('add', payload)
 
         def table(items, suffix, general=False):
             # Una riga Streamlit per ogni posizione permette al form di comparire
@@ -351,10 +446,10 @@ def render_portfolios(view):
                 cells[cell_index + 9].write(fmt_money(row['Dividendo annuo €']))
                 actions = cells[cell_index + 10].columns(2, gap='small')
                 if actions[0].button('＋', key=f'plus_{suffix}_{item_id}', help='Acquista', use_container_width=True):
-                    action_preset(row, 'BUY', suffix)
+                    set_inline_action(row, 'BUY')
                     st.rerun()
                 if actions[1].button('−', key=f'minus_{suffix}_{item_id}', help='Vendi', use_container_width=True):
-                    action_preset(row, 'SELL', suffix)
+                    set_inline_action(row, 'SELL')
                     st.rerun()
 
                 history_key = f'history_open_{item_id}'
@@ -364,27 +459,11 @@ def render_portfolios(view):
                                                   help='Chiudi storico' if is_open else 'Apri storico acquisti e vendite',
                                                   use_container_width=True):
                     st.session_state[history_key] = not is_open
+                    if is_open and st.session_state.get('inline_action', {}).get('key') == row['_key']:
+                        st.session_state.pop('inline_action', None)
                     st.rerun()
                 if is_open:
-                    history = trades_for_position(active, row['_key'])
-                    with st.container(border=True):
-                        st.caption(f"Storico acquisti e vendite · {row['Ticker']} · {row['Broker']}")
-                        if history:
-                            detail = pd.DataFrame([{
-                                'Data': date.fromisoformat(str(t['trade_date'])).strftime('%d/%m/%Y'),
-                                'Operazione': 'Acquisto' if t['kind'] == 'BUY' else 'Vendita',
-                                'Quantità': ('+' if t['kind'] == 'BUY' else '−') + fmt_quantity(t['quantity']),
-                                'Prezzo unitario': fmt_money(t['unit_price']),
-                                'Commissioni': fmt_money(t['fee']),
-                            } for t in history])
-                            st.dataframe(detail, hide_index=True, use_container_width=True,
-                                         height=min(38 * (len(detail) + 1) + 6, 350))
-                        else:
-                            st.caption('Nessun acquisto o vendita registrato per questa posizione.')
-
-                selection = st.session_state.get('quick_selection')
-                if selection and selection[0] == suffix and selection[1] == row['_key']:
-                    quick_form(suffix, row)
+                    render_inline_panel(row, suffix, item_id)
                 st.markdown('<div style="border-bottom:1px solid #e5e7eb;margin:3px 0 9px 0"></div>', unsafe_allow_html=True)
 
             value_sum = sum((r['Valore €'] or 0) for r in items)

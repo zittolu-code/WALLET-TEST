@@ -1,47 +1,55 @@
-# Wallet Monitor 2.2 — DEMO tabellare (TAB + storico per posizione)
+# Wallet Monitor 2.2 — DEMO (storico e operazioni unificati)
 
-**Solo ambiente di prova:** dati fittizi, prezzi e dividend yield simulati, SQLite in memoria per sessione. Nessun login Google, Neon, collegamento a portafogli reali, esportazione CSV o backup attivo. Le modifiche svaniscono alla fine della sessione o con il pulsante di reset.
+**Ambiente dimostrativo indipendente:** soltanto dati fittizi, quotazioni e dividend yield simulati, database SQLite in memoria per sessione del browser. Nessun login Google, Neon, accesso a conti reali, esportazione CSV o backup in esecuzione. Le modifiche si perdono quando termina la sessione o si reimposta la DEMO.
 
-La versione principale **Wallet Monitor 2.1 non va modificata**.
+**La versione principale 2.1 NON deve essere modificata.**
 
-## Dove caricare i file
+## Repository e pubblicazione
 
-- Repository della **sola DEMO**: `zittolu-code/wallet-demo-22`
-- Branch di pubblicazione DEMO: `main`
-- **NON** utilizzare il repository principale `zittolu-code/wallet` né modificare la sua versione 2.1.
+- Repository destinazione: `zittolu-code/wallet-demo-22` (solo DEMO), branch `main`.
+- Non caricare i file nel repository principale `zittolu-code/wallet` né nella release 2.1.
+- Sostituire nella **radice** del repository DEMO i cinque file dello ZIP: `app.py`, `ledger.py`, `storage.py`, `requirements.txt`, `README.md`.
+- Eseguire commit su GitHub e controllare la DEMO collegata a Streamlit. Se l'aggiornamento non appare, eseguire «Reboot»/«Rerun» oppure ricaricare la pagina.
+- La prima apertura di questa revisione rigenera i dati DEMO semplificati; in alternativa, utilizzare «Ricomincia con i dati di esempio» nel menu laterale.
 
-## Pubblicazione su GitHub / Streamlit
+## Novità di questa revisione
 
-1. Su GitHub aprire `zittolu-code/wallet-demo-22` e la branch `main`.
-2. Caricare **tutti e cinque i file** nella directory radice del repository, sostituendo gli omonimi: `app.py`, `ledger.py`, `storage.py`, `requirements.txt`, `README.md`.
-3. Confermare il commit. La DEMO Streamlit collegata al repository eseguirà il deploy; se necessario, utilizzare «Reboot» o «Rerun».
-4. Verificare la DEMO nel browser (le modifiche a GitHub **non** sono state eseguite automaticamente dallo ZIP).
+1. **Un solo riquadro sotto ogni riga:** la freccia `▾` espande lo storico di acquisti/vendite, distinto per **portafoglio + titolo + valuta + broker**. I pulsanti `＋` / `−` aprono nello **stesso riquadro** i campi per un nuovo acquisto o una nuova vendita. Non si crea più un secondo pannello separato sotto lo storico. Un solo modulo è attivo alla volta.
+2. **Modifica e Elimina in ogni riga dello storico:** i pulsanti `✏️` e `🗑️` sono all'estrema destra della transazione. Modifica permette di correggere **data, quantità, prezzo unitario e commissioni**, senza cambiare portafoglio, ticker, broker o tipo di operazione. Elimina richiede conferma. Entrambi agiscono nel riquadro dello storico, senza cambiare schermata.
+3. **Contabilità protetta:** ogni salvataggio usa `mutate()` del registro, che ricalcola la cronologia e rifiuta operazioni non coerenti, comprese vendite scoperte o eliminazioni di acquisti indispensabili a coprire vendite. L'eliminazione è **logica**: la transazione sparisce dallo storico attivo, ma resta nel registro di controllo e può essere ripristinata dalla scheda *Gestione operazioni*.
+4. **Dati DEMO ridotti a una sola azienda per wallet:**
+   - Wallet **Directa** → **MSFT** (Microsoft), due acquisti e una vendita, saldo iniziale **13,00** azioni.
+   - Wallet **Fineco** → **ENI.MI** (ENI), due acquisti e una vendita, saldo iniziale **25,00** azioni.
+   Questi sono soltanto i dati *iniziali di prova*: la scheda *Nuova operazione* conserva la capacità di inserire altri titoli. Nessun limite viene imposto alla versione definitiva.
 
-## Modifiche presenti
+## Funzionalità preservate
 
-1. **Quantità con due decimali** (es. `15,00`) nelle tabelle delle posizioni e degli storici, oltre che nella visualizzazione degli input. I valori originali del registro NON vengono arrotondati o riscritti soltanto per effetto della formattazione.
-2. **Storico per posizione espandibile**: freccia `▾` all'estrema destra della riga; un clic mostra immediatamente sotto la riga gli acquisti e le vendite, un altro clic (`▴`) richiude. Elenco con data, tipo, quantità con segno, prezzo unitario e commissioni, dal più recente al meno recente. Filtri distinti per portafoglio, ticker, valuta **e broker**; operazioni annullate escluse.
-3. **Cinque TAB nativi Streamlit** al posto dei cerchietti radio: I miei portafogli, Dashboard generale, Nuova operazione, Gestione operazioni, Storico operazioni. Il resto delle funzioni resta accessibile; le TAB caricano il loro contenuto nell'interfaccia senza cambiare pagina.
-4. **Riquadri riepilogativi compatti**: valori ed etichette più piccoli e altezza uniforme; l'indicatore P/L è mantenuto e non altera l'altezza.
-5. Restano i **pulsanti + Acquisto e − Vendita** su ogni posizione e il relativo modulo di operazione immediatamente sotto la riga. Restano inoltre gli obiettivi percentuali modificabili e i totali sotto ogni portafoglio.
+- Interfaccia compatta, simile a un foglio Excel, con **cinque TAB** orizzontali.
+- Quantità **visualizzate con due decimali**, senza perdere precisione nel registro.
+- Valori con `€` e percentuali con `%`, Obiettivo % modificabile dalla tabella.
+- Totali sotto ogni portafoglio e indicatori riepilogativi di uguale altezza, con testo ridotto.
+- Separazione per portafoglio/ticker/broker e rendimenti colorati.
+- Schede generali *Nuova operazione*, *Gestione operazioni*, *Storico operazioni* ancora disponibili per operazioni e controllo.
 
-## Verifiche suggerite nel browser
+## Verifiche da effettuare in Streamlit
 
-- I 5 TAB sono orizzontali, non mostrano cerchietti e permettono di visualizzare le sezioni.
-- La quantità MSFT Directa si vede come **15,00**, non `15,0000`.
-- Aprire `▾` su **MSFT / Directa**: nella DEMO iniziale ci sono due acquisti (10,00 e 5,00) nell'ordine corretto. **MSFT / Fineco** deve mostrare un solo acquisto da 3,00; non devono mescolarsi i broker.
-- Provare + Acquisto e − Vendita su MSFT Directa e su MSFT Fineco; dopo il salvataggio verificare i nuovi record in ciascuno storico.
-- Tentare una vendita maggiore della quantità disponibile: deve essere bloccata.
-- Cambiare un Obiettivo %; verificare il totale e le posizioni distinte.
-- I tre riquadri in «Azioni» devono avere identiche dimensioni e testo più contenuto, incluso il riquadro P/L con indicatore verde o rosso.
-- Verificare la visualizzazione anche da browser mobile / schermo ristretto: la tabella larga potrebbe richiedere scorrimento.
+1. Nella scheda *I miei portafogli* devono comparire solo **Directa / MSFT** e **Fineco / ENI.MI**, ciascuno con tre operazioni iniziali.
+2. Aprire la freccia sotto MSFT: lo storico con le tre operazioni deve apparire sotto la stessa posizione; poi premere `＋` e `−`: i rispettivi moduli devono comparire **dentro** il riquadro dello storico.
+3. Salvare un acquisto e una vendita e verificare variazioni di quantità, PMC, valore, P/L e nuova riga nello storico.
+4. Premere `✏️` su un acquisto, modificare prezzo e quantità, salvare e verificare il ricalcolo dei totali.
+5. Premere `🗑️`: prima dell'esplicita conferma non deve avvenire alcuna eliminazione. Dopo conferma, la riga sparisce dallo storico attivo; deve essere ancora disponibile per ripristino in *Gestione operazioni*.
+6. Provare a eliminare l'unico acquisto che copre una vendita o a vendere più azioni di quelle possedute: l'operazione deve essere respinta senza modificare il registro.
+7. Aprire Fineco e verificare che lo storico non contenga operazioni di Directa. Controllare inoltre i cinque TAB, la formattazione con due decimali e gli allineamenti.
 
-## Limiti / stato del collaudo
+## Verifica eseguita offline
 
-- Controlli di sintassi e test offline del registro e del filtro dello storico eseguibili senza avviare Streamlit.
-- **Collaudo visivo e interattivo online ancora necessario** prima di promuovere il codice verso un altro ambiente.
-- Nessun dato finanziario reale va inserito nella DEMO.
+- Codice Python compilato senza errori sintattici.
+- Test del registro e della logica di interazione (simulazione eventi): acquisto, modifica, cancellazione confermata, cancellazione bloccata per incoerenza, separazione dei wallet e audit.
+- **Verifica visiva/interattiva con Streamlit effettivo ancora necessaria:** Streamlit non è installabile nell'ambiente di collaudo offline. Non dichiarare completato il collaudo browser prima di provarlo nella DEMO pubblicata.
 
-## Per una futura chat temporanea
+## Regole di continuità per le chat temporanee
 
-Conservare questo ZIP come base; allegarlo alla prossima chat assieme a eventuali nuove indicazioni. La parola **ELABORA** autorizza le modifiche e la generazione di un nuovo ZIP. La parola **TERMINA SESSIONE** richiede uno ZIP di continuità con file e istruzioni aggiornate. **Non modificare mai la 2.1** durante il collaudo della DEMO.
+- Raccogliere note senza modificare alcun file finché l'utente non scrive **ELABORA**.
+- Quando l'utente scrive **ELABORA**, modificare solo la DEMO, testarla e consegnare lo ZIP pronto per GitHub.
+- Quando l'utente scrive **TERMINA SESSIONE**, preparare uno ZIP di continuità contenente i file più recenti e istruzioni dettagliate per una nuova chat temporanea.
+- La versione 2.1 del repository principale deve rimanere intoccata, così come Google, Neon e backup nella DEMO.
